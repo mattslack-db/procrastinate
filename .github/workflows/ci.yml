@@ -19,20 +19,35 @@ jobs:
   tests:
     strategy:
       matrix:
-        # Instead of testing every combination of Python and Postgres, we pair versions
-        # from oldest to newest. This avoids combinatory explosion, and still tests
-        # every supported version at least once.
+        # Instead of testing every combination of Python, Postgres, Django and SQLAlchemy,
+        # we pair versions from oldest to newest. This avoids combinatory explosion, and
+        # still tests every supported version at least once.
+        # Supported versions:
+        # - Python: https://endoflife.date/python
+        # - Postgres: https://endoflife.date/postgresql
+        # - Django: https://endoflife.date/django
+        # - SQLAlchemy: https://www.sqlalchemy.org/download.html#relstatus
         include:
           - python-version: "3.11"
             postgres-version: "15"
+            django-version: "5.2"
+            sqlalchemy-version: "2.0"
           - python-version: "3.12"
             postgres-version: "16"
+            django-version: "6.0"
+            sqlalchemy-version: "2.1"
           - python-version: "3.13"
             postgres-version: "17"
+            django-version: "6.1"
+            sqlalchemy-version: "2.1"
           - python-version: "3.14"
             postgres-version: "18"
+            django-version: "6.1"
+            sqlalchemy-version: "2.1"
           - python-version: "3.15"
             postgres-version: "19"
+            django-version: "6.1"
+            sqlalchemy-version: "2.1"
 
     name: "py${{ matrix.python-version }}"
     runs-on: ubuntu-latest
@@ -64,8 +79,14 @@ jobs:
           enable-cache: false
 
       - name: Run tests
-        run: uv run pytest --cov=procrastinate --cov-branch
+        run: >-
+          uv run
+          --group "django-${DJANGO_VERSION}"
+          --group "sqlalchemy-${SQLALCHEMY_VERSION}"
+          pytest --cov=procrastinate --cov-branch
         env:
+          DJANGO_VERSION: ${{ matrix.django-version }}
+          SQLALCHEMY_VERSION: ${{ matrix.sqlalchemy-version }}
           COVERAGE_FILE: ".coverage.${{ matrix.python-version }}"
           PGHOST: localhost
           PGUSER: postgres

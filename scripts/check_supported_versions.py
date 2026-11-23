@@ -11,6 +11,9 @@ Keep the supported Python and PostgreSQL versions consistent across the repo.
 - PostgreSQL: the oldest version in the CI test matrix is the source of truth. The
   README is rewritten from it. The matrix must test every version from it on, up to
   the one the other CI jobs use (kept up to date by Renovate).
+- Django and SQLAlchemy: the CI test matrix must use exactly the versions that have a
+  dependency group in pyproject.toml (e.g. `django-6-0 = ["django==6.0.*"]`).
+  django-upgrade's target version is rewritten from the oldest Django in the matrix.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ ROOT = pathlib.Path(__file__).parents[1]
 README = ROOT / "README.md"
 PYPROJECT = ROOT / "pyproject.toml"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
+PRECOMMIT = ROOT / ".pre-commit-config.yaml"
 
 
 def rewrite(path: pathlib.Path, pattern: str, replacement: str) -> None:
@@ -38,8 +42,35 @@ def rewrite(path: pathlib.Path, pattern: str, replacement: str) -> None:
         print(f"{path.name}: updated to {replacement!r}")
 
 
+def check_groups(package: str, groups: dict, matrix: list[dict]) -> list[str]:
+    errors = []
+    grouped = set()
+    for name, requirements in groups.items():
+        if not (match := re.fullmatch(rf"{package}-(\d+)-(\d+)", name)):
+            continue
+        version = f"{match.group(1)}.{match.group(2)}"
+        grouped.add(version)
+        if not re.match(
+            rf"{package}(\[[^\]]*\])?=={re.escape(version)}\.\*", requirements[0]
+        ):
+            errors.append(
+                f"pyproject.toml: group {name} doesn't pin {package}=={version}.*"
+            )
+    tested = {row[f"{package}-version"] for row in matrix}
+    errors += [
+        f"CI test matrix uses {package} {v}, which has no {package}-* group"
+        for v in sorted(tested - grouped)
+    ]
+    errors += [
+        f"pyproject.toml has a group for {package} {v}, unused by the CI test matrix"
+        for v in sorted(grouped - tested)
+    ]
+    return errors
+
+
 def main() -> int:
-    requires_python = tomllib.loads(PYPROJECT.read_text())["project"]["requires-python"]
+    pyproject = tomllib.loads(PYPROJECT.read_text())
+    requires_python = pyproject["project"]["requires-python"]
     match = re.fullmatch(r">=3\.(\d+)(?:\.\d+)?", requires_python)
     if not match:
         sys.exit(f"pyproject.toml: unexpected requires-python {requires_python!r}")
@@ -66,6 +97,16 @@ def main() -> int:
         f'<span id="min-postgres">{min(ci_postgres)}</span>',
     )
 
+    oldest_django = min(
+        (row["django-version"] for row in matrix),
+        key=lambda v: tuple(int(part) for part in v.split(".")),
+    )
+    rewrite(
+        PRECOMMIT,
+        r"django-upgrade --target-version [\d.]+",
+        f"django-upgrade --target-version {oldest_django}",
+    )
+
     errors = [
         f"CI test matrix doesn't test Python 3.{minor}"
         for minor in range(python_minor, max(ci_python) + 1)
@@ -86,6 +127,8 @@ def main() -> int:
             f"CI test matrix's newest PostgreSQL is {max(ci_postgres)}, "
             f"but other jobs use {', '.join(sorted(other_images))}"
         )
+    for package in ("django", "sqlalchemy"):
+        errors += check_groups(package, pyproject["dependency-groups"], matrix)
     for error in errors:
         print(error, file=sys.stderr)
     return 1 if errors else 0
