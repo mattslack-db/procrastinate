@@ -1,5 +1,6 @@
 from __future__ import annotations
 
 from .credentials import LakebaseCredentialProvider
+from .lakebase_connector import LakebaseConnector
 
-__all__ = ["LakebaseCredentialProvider"]
+__all__ = ["LakebaseConnector", "LakebaseCredentialProvider"]
