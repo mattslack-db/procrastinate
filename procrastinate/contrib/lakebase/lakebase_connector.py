@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
-from typing import Any
+import logging
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 import packaging.version
 
-from procrastinate import psycopg_connector
+from procrastinate import connector, psycopg_connector
 
 from . import credentials
 
+if TYPE_CHECKING:
+    import psycopg_pool
+
+logger = logging.getLogger(__name__)
+
+LISTEN_RETRY_DELAY = 5.0  # seconds
 MIN_PSYCOPG_POOL_VERSION = packaging.version.Version("3.3.0")
 RESERVED_ARGUMENTS = ("conninfo", "kwargs")
 
@@ -73,6 +82,38 @@ class LakebaseConnector(psycopg_connector.PsycopgConnector):
             refresh_margin=refresh_margin,
         )
         super().__init__(kwargs=self.credential_provider, **kwargs)
+
+    async def _resolve_connection_kwargs(self) -> dict[str, Any]:
+        # The provider makes blocking HTTP calls: keep them off the event loop.
+        return await asyncio.to_thread(self.credential_provider)
+
+    async def _create_pool(
+        self, pool_args: dict[str, Any]
+    ) -> psycopg_pool.AsyncConnectionPool:
+        return await super()._create_pool(
+            {**pool_args, "kwargs": self._resolve_connection_kwargs}
+        )
+
+    async def listen_notify(
+        self, on_notification: connector.Notify, channels: Iterable[str]
+    ) -> None:
+        # A failure to reconnect (endpoint resuming from scale to zero, or a
+        # transient error while generating a credential) must not stop the
+        # worker, which keeps polling for jobs in the meantime.
+        channel_names = list(channels)
+        while True:
+            try:
+                await super().listen_notify(
+                    on_notification=on_notification, channels=channel_names
+                )
+            except Exception:
+                logger.warning(
+                    "Lakebase listener failed, retrying in %s seconds",
+                    LISTEN_RETRY_DELAY,
+                    exc_info=True,
+                    extra={"action": "lakebase_listener_retry"},
+                )
+                await asyncio.sleep(LISTEN_RETRY_DELAY)
 
 
 def _check_psycopg_pool_version(version: packaging.version.Version | None) -> None:

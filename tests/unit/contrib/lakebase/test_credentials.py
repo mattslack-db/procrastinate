@@ -152,6 +152,9 @@ def test_call__empty_token_raises(fake_workspace: FakeWorkspace, mocker):
 
 
 def test_call__concurrent_calls_mint_once(fake_workspace: FakeWorkspace):
+    # A slow mint keeps the first caller inside the provider while the others
+    # arrive, so this fails if the lock is removed.
+    fake_workspace.postgres.mint_delay = 0.05
     provider = make_provider(fake_workspace)
     results: list[str] = []
 
@@ -197,3 +200,28 @@ def test_call__mint_failure_log_has_no_token(fake_workspace: FakeWorkspace, capl
 
     assert ENDPOINT in caplog.text
     assert "token-1" not in caplog.text
+
+
+def test_init__missing_sdk_raises_at_construction(monkeypatch):
+    class MissingSdk:
+        def __getattr__(self, item: str):
+            raise ImportError("No module named 'databricks'")
+
+    monkeypatch.setattr(credentials, "databricks_sdk", MissingSdk())
+
+    with pytest.raises(ImportError, match="databricks"):
+        credentials.LakebaseCredentialProvider(endpoint=ENDPOINT)
+
+
+def test_call__host_lookup_failure_is_logged(fake_workspace: FakeWorkspace, caplog):
+    fake_workspace.postgres.endpoint_error = RuntimeError("endpoint not found")
+    provider = make_provider(fake_workspace)
+
+    with (
+        pytest.raises(RuntimeError, match="endpoint not found"),
+        caplog.at_level("ERROR"),
+    ):
+        provider()
+
+    assert "look up the host" in caplog.text
+    assert ENDPOINT in caplog.text

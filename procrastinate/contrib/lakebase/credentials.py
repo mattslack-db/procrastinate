@@ -77,6 +77,9 @@ class LakebaseCredentialProvider:
             raise ValueError(
                 f"Invalid Lakebase endpoint {endpoint!r}: expected {ENDPOINT_FORMAT}"
             )
+        if workspace_client is None:
+            # Fail here rather than at the first connection if the SDK is missing.
+            _ = databricks_sdk.WorkspaceClient
         self._endpoint = endpoint
         self._database = database
         self._user = user
@@ -107,7 +110,10 @@ class LakebaseCredentialProvider:
 
     def _resolve_host(self) -> str:
         if self._host is None:
-            endpoint = self._workspace().postgres.get_endpoint(name=self._endpoint)
+            endpoint = self._call_sdk(
+                "look up the host",
+                lambda: self._workspace().postgres.get_endpoint(name=self._endpoint),
+            )
             hosts = getattr(getattr(endpoint, "status", None), "hosts", None)
             host = getattr(hosts, "host", None)
             if not host:
@@ -119,7 +125,10 @@ class LakebaseCredentialProvider:
 
     def _resolve_user(self) -> str:
         if self._user is None:
-            self._user = self._workspace().current_user.me().user_name
+            self._user = self._call_sdk(
+                "look up the current user",
+                lambda: self._workspace().current_user.me().user_name,
+            )
         return self._user
 
     def _current_token(self) -> str:
@@ -137,17 +146,27 @@ class LakebaseCredentialProvider:
             return False
         return self._clock() < credential.expires_at - self._refresh_margin
 
-    def _mint(self) -> _Credential:
+    def _call_sdk(self, action: str, call: Callable[[], Any]) -> Any:
+        # psycopg_pool only reports a failed connection attempt as a warning,
+        # so log the reason here. The token is never part of the message.
         try:
-            response = self._workspace().postgres.generate_database_credential(
-                endpoint=self._endpoint
-            )
+            return call()
         except Exception:
             logger.exception(
-                f"Could not generate a Lakebase credential for {self._endpoint}",
-                extra={"action": "lakebase_credential_error"},
+                "Could not %s for Lakebase endpoint %s",
+                action,
+                self._endpoint,
+                extra={"action": "lakebase_sdk_error"},
             )
             raise
+
+    def _mint(self) -> _Credential:
+        response = self._call_sdk(
+            "generate a database credential",
+            lambda: self._workspace().postgres.generate_database_credential(
+                endpoint=self._endpoint
+            ),
+        )
         if not response.token:
             raise exceptions.ConnectorException(
                 f"Lakebase returned an empty database credential for {self._endpoint}"

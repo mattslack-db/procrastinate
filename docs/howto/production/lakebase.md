@@ -6,9 +6,10 @@ service of Databricks. Procrastinate's schema works on it unchanged, including
 Lakebase expects an OAuth token that expires after one hour.
 
 {py:class}`procrastinate.contrib.lakebase.LakebaseConnector` takes care of
-that. It generates a database credential through the Databricks SDK, reuses it
-until shortly before it expires, and gives a fresh one to every new connection,
-including the connection the worker uses to listen for notifications.
+that. It generates a database credential through the Databricks SDK and reuses
+it until shortly before it expires, so every new connection is opened with a
+valid one. This includes the connection the worker uses to listen for
+notifications.
 
 ## Install
 
@@ -68,12 +69,21 @@ granted access to them by the owning role.
 ## Scale to zero
 
 When a Lakebase endpoint suspends, its connections are closed. The connector
-needs no configuration for this: the pool replaces dead connections, the
-listener reconnects, and each new connection gets a valid credential. The first
-query after a suspension is slower while the endpoint resumes.
+needs no configuration for this: the pool replaces dead connections and each
+new connection gets a valid credential. If the listener cannot reconnect, it
+logs a warning and tries again every 5 seconds; the worker keeps polling for
+jobs in the meantime. The first query after a suspension is slower while the
+endpoint resumes.
 
-Lakebase suspends an endpoint only when it receives no queries for the
-configured timeout. A running worker polls for jobs every
-`fetch_job_polling_interval` (5 seconds by default), so the endpoint stays
-active for as long as a worker is running. Scale to zero only takes effect when
-no worker is connected.
+Lakebase suspends an endpoint after it has been idle for the configured
+timeout. A running worker holds connections and polls for jobs every
+`fetch_job_polling_interval` (5 seconds by default), so expect the endpoint to
+stay active for as long as a worker is running.
+
+## Troubleshooting
+
+If the app cannot authenticate when it opens (a wrong endpoint, or no access to
+the workspace), opening fails with a `psycopg_pool.PoolTimeout` after the
+pool's timeout, as it does for wrong credentials with any Postgres server. The
+reason is logged by `procrastinate.contrib.lakebase.credentials` at error
+level.

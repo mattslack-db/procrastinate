@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -32,14 +34,21 @@ class FakePostgres:
         self.token_lifetime: int | None = 3600
         self.now: float = 0.0
         self.error: Exception | None = None
+        self.endpoint_error: Exception | None = None
+        self.mint_delay: float = 0.0
+        self.mint_thread_ids: list[int] = []
 
     def get_endpoint(self, name: str) -> Any:
         self.endpoint_calls.append(name)
+        if self.endpoint_error is not None:
+            raise self.endpoint_error
         hosts = None if self.host is None else _Namespace(host=self.host)
         return _Namespace(status=_Namespace(hosts=hosts))
 
     def generate_database_credential(self, endpoint: str) -> FakeCredential:
         self.credential_calls.append(endpoint)
+        self.mint_thread_ids.append(threading.get_ident())
+        time.sleep(self.mint_delay)
         if self.error is not None:
             raise self.error
         expire_time = (

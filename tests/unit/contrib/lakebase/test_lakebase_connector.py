@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import packaging.version
 import pytest
 
-from procrastinate import psycopg_connector, sync_psycopg_connector
+from procrastinate import exceptions, psycopg_connector, sync_psycopg_connector
 from procrastinate.contrib import lakebase
-from procrastinate.contrib.lakebase import credentials
+from procrastinate.contrib.lakebase import credentials, lakebase_connector
 
 from .conftest import ENDPOINT, HOST, FakeWorkspace
 
@@ -89,3 +92,44 @@ def test_get_sync_connector__shares_the_provider(fake_workspace: FakeWorkspace):
 
     assert isinstance(sync_connector, sync_psycopg_connector.SyncPsycopgConnector)
     assert sync_connector._pool_args["kwargs"] is connector.credential_provider
+
+
+async def test_create_pool__resolves_credentials_off_the_event_loop(
+    fake_workspace: FakeWorkspace,
+):
+    connector = lakebase.LakebaseConnector(
+        endpoint=ENDPOINT, workspace_client=fake_workspace
+    )
+
+    pool = await connector._create_pool(connector._pool_args)
+    result = await pool.kwargs()  # type: ignore[misc]
+
+    assert result["password"] == "token-1"
+    assert fake_workspace.postgres.mint_thread_ids != [threading.get_ident()]
+
+
+async def test_listen_notify__retries_after_failure(
+    fake_workspace: FakeWorkspace, mocker, monkeypatch
+):
+    monkeypatch.setattr(lakebase_connector, "LISTEN_RETRY_DELAY", 0)
+    parent = mocker.patch.object(
+        psycopg_connector.PsycopgConnector,
+        "listen_notify",
+        side_effect=[
+            RuntimeError("503 from the workspace"),
+            exceptions.ConnectorException(),
+            asyncio.CancelledError(),
+        ],
+    )
+    connector = lakebase.LakebaseConnector(
+        endpoint=ENDPOINT, workspace_client=fake_workspace
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await connector.listen_notify(
+            on_notification=mocker.AsyncMock(), channels=iter(["some_channel"])
+        )
+
+    assert [call.kwargs["channels"] for call in parent.call_args_list] == [
+        ["some_channel"]
+    ] * 3
