@@ -19,6 +19,8 @@ Connectors
 
 .. autoclass:: procrastinate.contrib.psycopg2.Psycopg2Connector
 
+.. autoclass:: procrastinate.contrib.lakebase.LakebaseConnector
+
 .. autoclass:: procrastinate.testing.InMemoryConnector
     :members: reset, jobs
 
