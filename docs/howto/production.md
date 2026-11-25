@@ -14,6 +14,7 @@ production/concurrency
 production/monitoring
 production/connections
 production/external_connection
+production/lakebase
 production/schema
 production/delete_finished_jobs
 production/retry_stalled_jobs

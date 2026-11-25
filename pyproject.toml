@@ -40,6 +40,7 @@ sqlalchemy = ["sqlalchemy~=2.0"]
 aiopg = ["aiopg", "psycopg2-binary"]
 psycopg2 = ["psycopg2-binary"]
 sphinx = ["sphinx"]
+lakebase = ["databricks-sdk>=0.81"]
 
 [project.urls]
 homepage = "https://procrastinate.readthedocs.io/"
@@ -59,6 +60,7 @@ pg_implem = ["aiopg", "sqlalchemy", "psycopg2-binary", "psycopg[binary,pool]"]
 test = [
     "alembic",
     "asyncpg",
+    "databricks-sdk>=0.81",
     "pytest-asyncio",
     "pytest-benchmark",
     "pytest-cov",
